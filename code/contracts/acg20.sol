@@ -2,6 +2,11 @@ pragma solidity ^0.4.22;
 
 import "helpers/SafeMath.sol";
 
+contract ACG721Interface {
+    function receiveApproval(address _from, address _to, uint256 _value, uint256 _tokenId) public returns (bool)
+    {}
+}
+
 /**
  * @title StandardERC20
  * @dev A one file ERC20 token for the 4th part of the Ethereum Development Walkthrough tutorial series
@@ -63,7 +68,7 @@ contract StandardERC20 {
 	* @param _to address The address which you want to transfer to
 	* @param _value uint256 the amount of tokens to be transferred
 	*/
-    function transferFrom1(address _from, address _to, uint256 _value) public returns (bool) {
+    function transferFrom(address _from, address _to, uint256 _value) public returns (bool) {
         require(_to != address(0), "Receiver must have a non-sero address");
         require(_value <= balances[_from], "Sender's balance must be larger than transferred amount");
         require(_value <= allowed[_from][msg.sender], "Sender must have approved larger amount to the delegator");
@@ -114,6 +119,7 @@ contract ACG20 is StandardERC20 {
     uint8 public decimals = 2;
 
     address public owner;
+    address public acg721Contract;
 
     // artwork ID => highest bidder address
     mapping(uint256 => address) public highestBidder;
@@ -124,6 +130,7 @@ contract ACG20 is StandardERC20 {
     event Mint(address indexed to, uint256 amount);
     event Burn(address indexed to, uint256 amount);
     event NewBid(address indexed from, uint256 amount, uint256 artwork);
+    event RegisterACG721Contract(address indexed to);
 
 	/**
 	* @dev Throws if called by any account other than the owner.
@@ -134,9 +141,11 @@ contract ACG20 is StandardERC20 {
     }
 
     /**
-	* @dev Check if the transfer is the payment of an auction. Throws if:
-    * - sdfds
-    * - sdfsd
+	* @dev Check if the transfer is the payment of an auction.
+    * - If it is, then
+    *    - transfer the ACG20 token from the frozen part
+    *    - reset the frozen record
+    * - If not, then transfer the ACG20 token from buyer's account
 	*/
     modifier isForAuction(address _from, uint256 _value, uint256 _artworkId) {
         if (_from == highestBidder[_artworkId]) {
@@ -150,10 +159,7 @@ contract ACG20 is StandardERC20 {
         _;
     }
 
-	/**
-	* @dev The artchain_acg20 constructor sets the original `owner` of the contract to the sender
-	* account.
-	*/
+	// @dev The artchain_acg20 constructor sets the original `owner` of the contract to the sender account.
     constructor() public {
         owner = msg.sender;
     }
@@ -236,23 +242,51 @@ contract ACG20 is StandardERC20 {
     }
 
     /**
-	* @dev transfer token for a specified address (support auction)
+	* @dev transfer token for a specified address for artwork purchase (support auction)
 	* @param _to The address to transfer to.
 	* @param _value The amount to be transferred.
     * @param _artworkId The ID of artwork which the transfer is for
 	*/
-    function transfer(address _to, uint256 _value, uint256 _artworkId) public isForAuction(msg.sender, _value, _artworkId) returns (bool) {
+    function payForArtwork(address _to, uint256 _value, uint256 _artworkId) public isForAuction(msg.sender, _value, _artworkId) returns (bool) {
         return super.transfer(_to, _value);
     }
 
     /**
-	* @dev Transfer tokens from one address to another (support auction)
+	* @dev Transfer tokens from one address to another for artwork purchase(support auction)
 	* @param _from address The address which you want to send tokens from
 	* @param _to address The address which you want to transfer to
 	* @param _value uint256 the amount of tokens to be transferred
     * @param _artworkId The ID of artwork which the transfer is for
 	*/
-    function transferFrom(address _from, address _to, uint256 _value, uint256 _artworkId) public isForAuction(_from, _value, _artworkId) returns (bool) {
-        return super.transferFrom1(_from, _to, _value);
+    function payForArtworkFrom(address _from, address _to, uint256 _value, uint256 _artworkId) public isForAuction(_from, _value, _artworkId) returns (bool) {
+        return super.transferFrom(_from, _to, _value);
+    }
+
+    /**
+	* @dev Register ACG721 contract
+	* @param _contract address The address of ACG721 contract
+    */
+    function registerACG721Contract(address _contract) public onlyOwner {
+        require(_contract != address(0), "Must register a valid contract address");
+        emit RegisterACG721Contract(_contract);
+        acg721Contract = _contract;
+    }
+
+    /**
+	* @dev Establish a safe transaction of buying a ACG721 token using ACG20 token.
+    *      Buyer first approves ACG721 contract to transfer the specific amount of 
+    *      ACG20 tokens under his account, and then call method  
+    *      receiveApproval() of ACG721 contract to accomplish the transaction.
+    *      Before calling this method, seller must approve this ACG20 contract to
+    *      transfer his ACG721 token with specific ID beforehead.
+    * @param _seller address The address of ACG721 token owner
+    * @param _value uint256 the amount of ACG20 tokens to be transferred
+    * @param _artworkId The ID of ACG721 which the transfer is for
+	*/
+    function approveAndCall(address _seller, uint256 _value, uint256 _artworkId) public returns (bool) {
+        require(acg721Contract != address(0), "Must register a valid contract before calling approveAndCall() method");
+        approve(acg721Contract, _value);
+
+        require(ACG721Interface(acg721Contract).receiveApproval(msg.sender, _seller, _value, _artworkId), "approveAndCall() must ensure calling receiveApproval() succeed");
     }
 }
